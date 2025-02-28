@@ -48,7 +48,7 @@
         <video id="streamer-preview" autoplay playsinline muted></video>
         <div id="controls">
             <button onclick="startStreaming()">Start Streaming</button>
-            <textarea id="streamer-offer" placeholder="Your offer will appear here..."></textarea>
+            <textarea id="streamer-offer" placeholder="Your offer will appear here after ICE gathering..." readonly></textarea>
             <br>
             <textarea id="viewer-answer" placeholder="Paste viewer's answer here..."></textarea>
             <button onclick="handleAnswer()">Submit Answer</button>
@@ -62,7 +62,7 @@
             <textarea id="streamer-offer-input" placeholder="Paste streamer's offer here..."></textarea>
             <button onclick="connectToStreamer()">Connect</button>
             <br>
-            <textarea id="viewer-answer-output" placeholder="Your answer will appear here..."></textarea>
+            <textarea id="viewer-answer-output" placeholder="Your answer will appear here..." readonly></textarea>
         </div>
     </div>
 
@@ -78,7 +78,7 @@
                     username: "ef13V03FMFX9T3H7G3",
                     credential: "ktZ4K4wOVzriH7eg"
                 },
-                { urls: "stun:stun.l.google.com:19302" } // Added STUN for better connectivity
+                { urls: "stun:stun.l.google.com:19302" }
             ]
         };
 
@@ -114,9 +114,7 @@
                 });
 
                 peerConnection.onicecandidate = (event) => {
-                    if (event.candidate) {
-                        log("ICE candidate generated.");
-                    } else {
+                    if (!event.candidate) {
                         log("ICE gathering complete.");
                         document.getElementById('streamer-offer').value = JSON.stringify(peerConnection.localDescription);
                     }
@@ -128,7 +126,7 @@
 
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
-                log("Offer created and set as local description.");
+                log("Offer created and set as local description. Waiting for ICE candidates...");
             } catch (error) {
                 log(`Error starting stream: ${error}`);
                 console.error('Error starting stream:', error);
@@ -137,7 +135,12 @@
 
         async function handleAnswer() {
             try {
-                const answer = JSON.parse(document.getElementById('viewer-answer').value);
+                const answerText = document.getElementById('viewer-answer').value.trim();
+                if (!answerText) {
+                    log("Error: Viewer answer is empty.");
+                    return;
+                }
+                const answer = JSON.parse(answerText);
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
                 log("Viewer answer set as remote description.");
             } catch (error) {
@@ -149,7 +152,20 @@
         // Viewer functions
         async function connectToStreamer() {
             try {
-                const offer = JSON.parse(document.getElementById('streamer-offer-input').value);
+                const offerText = document.getElementById('streamer-offer-input').value.trim();
+                if (!offerText) {
+                    log("Error: Streamer offer is empty.");
+                    return;
+                }
+
+                let offer;
+                try {
+                    offer = JSON.parse(offerText);
+                } catch (e) {
+                    log("Error: Invalid streamer offer format. Please ensure it's valid JSON.");
+                    return;
+                }
+
                 peerConnection = new RTCPeerConnection(configuration);
                 log("Peer connection created for viewer.");
 
@@ -160,9 +176,7 @@
                 };
 
                 peerConnection.onicecandidate = (event) => {
-                    if (event.candidate) {
-                        log("ICE candidate generated.");
-                    } else {
+                    if (!event.candidate) {
                         log("ICE gathering complete.");
                         document.getElementById('viewer-answer-output').value = JSON.stringify(peerConnection.localDescription);
                     }
