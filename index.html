@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Screen Sharing App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin-top: 50px;
+        }
+        video {
+            width: 80%;
+            max-width: 800px;
+            border: 1px solid #ccc;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 16px;
+        }
+        #controls {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Screen Sharing App</h1>
+    <div id="role-selection">
+        <button onclick="selectRole('streamer')">Be a Streamer</button>
+        <button onclick="selectRole('viewer')">Be a Viewer</button>
+    </div>
+
+    <div id="streamer-controls" style="display: none;">
+        <h2>Streamer</h2>
+        <video id="streamer-preview" autoplay playsinline muted></video>
+        <div id="controls">
+            <button onclick="startStreaming()">Start Streaming</button>
+            <textarea id="streamer-offer" placeholder="Your offer will appear here..."></textarea>
+            <br>
+            <textarea id="viewer-answer" placeholder="Paste viewer's answer here..."></textarea>
+            <button onclick="handleAnswer()">Submit Answer</button>
+        </div>
+    </div>
+
+    <div id="viewer-controls" style="display: none;">
+        <h2>Viewer</h2>
+        <video id="viewer-video" autoplay playsinline></video>
+        <div id="controls">
+            <textarea id="streamer-offer-input" placeholder="Paste streamer's offer here..."></textarea>
+            <button onclick="connectToStreamer()">Connect</button>
+            <br>
+            <textarea id="viewer-answer-output" placeholder="Your answer will appear here..."></textarea>
+        </div>
+    </div>
+
+    <script>
+        let peerConnection;
+        let localStream;
+        const configuration = {
+            iceServers: [
+                {
+                    urls: "turn:relay1.expressturn.com:3478",
+                    username: "ef13V03FMFX9T3H7G3",
+                    credential: "ktZ4K4wOVzriH7eg"
+                }
+            ]
+        };
+
+        function selectRole(role) {
+            document.getElementById('role-selection').style.display = 'none';
+            if (role === 'streamer') {
+                document.getElementById('streamer-controls').style.display = 'block';
+            } else {
+                document.getElementById('viewer-controls').style.display = 'block';
+            }
+        }
+
+        // Streamer functions
+        async function startStreaming() {
+            try {
+                localStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                document.getElementById('streamer-preview').srcObject = localStream;
+
+                peerConnection = new RTCPeerConnection(configuration);
+                localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        document.getElementById('streamer-offer').value = JSON.stringify(peerConnection.localDescription);
+                    }
+                };
+
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                document.getElementById('streamer-offer').value = JSON.stringify(offer);
+            } catch (error) {
+                console.error('Error starting stream:', error);
+            }
+        }
+
+        async function handleAnswer() {
+            const answer = JSON.parse(document.getElementById('viewer-answer').value);
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+        }
+
+        // Viewer functions
+        async function connectToStreamer() {
+            try {
+                const offer = JSON.parse(document.getElementById('streamer-offer-input').value);
+                peerConnection = new RTCPeerConnection(configuration);
+
+                peerConnection.ontrack = (event) => {
+                    document.getElementById('viewer-video').srcObject = event.streams[0];
+                };
+
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        document.getElementById('viewer-answer-output').value = JSON.stringify(peerConnection.localDescription);
+                    }
+                };
+
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                document.getElementById('viewer-answer-output').value = JSON.stringify(answer);
+            } catch (error) {
+                console.error('Error connecting to streamer:', error);
+            }
+        }
+    </script>
+</body>
+</html>
