@@ -23,6 +23,17 @@
         #controls {
             margin-top: 20px;
         }
+        textarea {
+            width: 80%;
+            height: 100px;
+        }
+        #log {
+            margin-top: 20px;
+            text-align: left;
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+        }
     </style>
 </head>
 <body>
@@ -55,6 +66,8 @@
         </div>
     </div>
 
+    <div id="log"></div>
+
     <script>
         let peerConnection;
         let localStream;
@@ -64,9 +77,15 @@
                     urls: "turn:relay1.expressturn.com:3478",
                     username: "ef13V03FMFX9T3H7G3",
                     credential: "ktZ4K4wOVzriH7eg"
-                }
+                },
+                { urls: "stun:stun.l.google.com:19302" } // Added STUN for better connectivity
             ]
         };
+
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            logDiv.innerHTML += `<p>${new Date().toLocaleTimeString()} - ${message}</p>`;
+        }
 
         function selectRole(role) {
             document.getElementById('role-selection').style.display = 'none';
@@ -75,34 +94,56 @@
             } else {
                 document.getElementById('viewer-controls').style.display = 'block';
             }
+            log(`Selected role: ${role}`);
         }
 
         // Streamer functions
         async function startStreaming() {
             try {
+                log("Requesting screen share...");
                 localStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
                 document.getElementById('streamer-preview').srcObject = localStream;
+                log("Screen share started.");
 
                 peerConnection = new RTCPeerConnection(configuration);
-                localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+                log("Peer connection created for streamer.");
+
+                localStream.getTracks().forEach(track => {
+                    peerConnection.addTrack(track, localStream);
+                    log("Added track to peer connection.");
+                });
 
                 peerConnection.onicecandidate = (event) => {
                     if (event.candidate) {
+                        log("ICE candidate generated.");
+                    } else {
+                        log("ICE gathering complete.");
                         document.getElementById('streamer-offer').value = JSON.stringify(peerConnection.localDescription);
                     }
                 };
 
+                peerConnection.onconnectionstatechange = () => {
+                    log(`Streamer connection state: ${peerConnection.connectionState}`);
+                };
+
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
-                document.getElementById('streamer-offer').value = JSON.stringify(offer);
+                log("Offer created and set as local description.");
             } catch (error) {
+                log(`Error starting stream: ${error}`);
                 console.error('Error starting stream:', error);
             }
         }
 
         async function handleAnswer() {
-            const answer = JSON.parse(document.getElementById('viewer-answer').value);
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+            try {
+                const answer = JSON.parse(document.getElementById('viewer-answer').value);
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                log("Viewer answer set as remote description.");
+            } catch (error) {
+                log(`Error handling answer: ${error}`);
+                console.error('Error handling answer:', error);
+            }
         }
 
         // Viewer functions
@@ -110,22 +151,34 @@
             try {
                 const offer = JSON.parse(document.getElementById('streamer-offer-input').value);
                 peerConnection = new RTCPeerConnection(configuration);
+                log("Peer connection created for viewer.");
 
                 peerConnection.ontrack = (event) => {
-                    document.getElementById('viewer-video').srcObject = event.streams[0];
+                    log("Received remote track.");
+                    const viewerVideo = document.getElementById('viewer-video');
+                    viewerVideo.srcObject = event.streams[0];
                 };
 
                 peerConnection.onicecandidate = (event) => {
                     if (event.candidate) {
+                        log("ICE candidate generated.");
+                    } else {
+                        log("ICE gathering complete.");
                         document.getElementById('viewer-answer-output').value = JSON.stringify(peerConnection.localDescription);
                     }
                 };
 
+                peerConnection.onconnectionstatechange = () => {
+                    log(`Viewer connection state: ${peerConnection.connectionState}`);
+                };
+
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                log("Streamer offer set as remote description.");
                 const answer = await peerConnection.createAnswer();
                 await peerConnection.setLocalDescription(answer);
-                document.getElementById('viewer-answer-output').value = JSON.stringify(answer);
+                log("Answer created and set as local description.");
             } catch (error) {
+                log(`Error connecting to streamer: ${error}`);
                 console.error('Error connecting to streamer:', error);
             }
         }
