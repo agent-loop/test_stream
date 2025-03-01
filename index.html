@@ -3,41 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Screen Sharing App</title>
+    <title>Internet Screen Sharing</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            text-align: center;
-            margin-top: 50px;
-        }
-        video {
-            width: 80%;
-            max-width: 800px;
-            border: 1px solid #ccc;
-        }
-        button {
-            padding: 10px 20px;
-            margin: 5px;
-            font-size: 16px;
-        }
-        #controls {
-            margin-top: 20px;
-        }
-        textarea {
-            width: 80%;
-            height: 100px;
-        }
-        #log {
-            margin-top: 20px;
-            text-align: left;
-            max-width: 800px;
-            margin-left: auto;
-            margin-right: auto;
-        }
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+        video { width: 80%; max-width: 800px; border: 1px solid #ccc; }
+        button { padding: 10px 20px; margin: 5px; font-size: 16px; }
+        input { padding: 5px; margin: 5px; }
+        #log { margin-top: 20px; text-align: left; max-width: 800px; margin-left: auto; margin-right: auto; }
     </style>
 </head>
 <body>
-    <h1>Screen Sharing App</h1>
+    <h1>Internet Screen Sharing</h1>
     <div id="role-selection">
         <button onclick="selectRole('streamer')">Be a Streamer</button>
         <button onclick="selectRole('viewer')">Be a Viewer</button>
@@ -46,155 +22,162 @@
     <div id="streamer-controls" style="display: none;">
         <h2>Streamer</h2>
         <video id="streamer-preview" autoplay playsinline muted></video>
-        <div id="controls">
+        <div>
             <button onclick="startStreaming()">Start Streaming</button>
-            <textarea id="streamer-offer" placeholder="Your offer will appear here after ICE gathering..." readonly></textarea>
-            <br>
-            <textarea id="viewer-answer" placeholder="Paste viewer's answer here..."></textarea>
-            <button onclick="handleAnswer()">Submit Answer</button>
+            <p>Share this link with viewers: <span id="room-link"></span></p>
         </div>
     </div>
 
     <div id="viewer-controls" style="display: none;">
         <h2>Viewer</h2>
+        <input id="room-id-input" placeholder="Enter Room ID from Streamer">
+        <button onclick="joinAsViewer()">Join Stream</button>
         <video id="viewer-video" autoplay playsinline></video>
-        <div id="controls">
-            <textarea id="streamer-offer-input" placeholder="Paste streamer's offer here..."></textarea>
-            <button onclick="connectToStreamer()">Connect</button>
-            <br>
-            <textarea id="viewer-answer-output" placeholder="Your answer will appear here..." readonly></textarea>
-        </div>
     </div>
 
     <div id="log"></div>
 
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js"></script>
     <script>
-        let peerConnection;
-        let localStream;
+        // Your Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyDPxnvaYapJ4BO2h7PoKw435amJ6i-qYOc",
+            authDomain: "screenshareapp-2a85f.firebaseapp.com",
+            projectId: "screenshareapp-2a85f",
+            storageBucket: "screenshareapp-2a85f.firebasestorage.app",
+            messagingSenderId: "252523208229",
+            appId: "1:252523208229:web:15b6e19a8c597b6edd69cc",
+            measurementId: "G-1Y9EBEKM9E"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        let role, localStream, roomId;
+        const peerConnections = new Map();
         const configuration = {
             iceServers: [
-                {
-                    urls: "turn:relay1.expressturn.com:3478",
-                    username: "ef13V03FMFX9T3H7G3",
-                    credential: "ktZ4K4wOVzriH7eg"
-                },
-                { urls: "stun:stun.l.google.com:19302" }
+                { urls: "stun:openrelay.metered.ca:80" },
+                { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+                { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" }
             ]
         };
 
         function log(message) {
-            const logDiv = document.getElementById('log');
-            logDiv.innerHTML += `<p>${new Date().toLocaleTimeString()} - ${message}</p>`;
+            document.getElementById('log').innerHTML += `<p>${new Date().toLocaleTimeString()} - ${message}</p>`;
         }
 
-        function selectRole(role) {
+        function generateRoomId() {
+            return Math.random().toString(36).substring(2, 10);
+        }
+
+        function selectRole(selectedRole) {
+            role = selectedRole;
             document.getElementById('role-selection').style.display = 'none';
             if (role === 'streamer') {
                 document.getElementById('streamer-controls').style.display = 'block';
+                roomId = generateRoomId();
+                document.getElementById('room-link').textContent = `${window.location.href}?room=${roomId}`;
+                log(`Your Room ID: ${roomId}`);
             } else {
                 document.getElementById('viewer-controls').style.display = 'block';
             }
-            log(`Selected role: ${role}`);
         }
 
-        // Streamer functions
         async function startStreaming() {
             try {
-                log("Requesting screen share...");
+                log("Starting screen share...");
                 localStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
                 document.getElementById('streamer-preview').srcObject = localStream;
-                log("Screen share started.");
+                log("Screen sharing started.");
 
-                peerConnection = new RTCPeerConnection(configuration);
-                log("Peer connection created for streamer.");
-
-                localStream.getTracks().forEach(track => {
-                    peerConnection.addTrack(track, localStream);
-                    log("Added track to peer connection.");
+                const pc = await createPeerConnection(null, true);
+                peerConnections.set('streamer', pc);
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                db.ref(`rooms/${roomId}/offer`).set({
+                    sdp: offer.sdp,
+                    type: offer.type
                 });
+                log("Offer sent to viewers. Share the link above!");
 
-                peerConnection.onicecandidate = (event) => {
-                    if (!event.candidate) {
-                        log("ICE gathering complete.");
-                        document.getElementById('streamer-offer').value = JSON.stringify(peerConnection.localDescription);
-                    }
-                };
-
-                peerConnection.onconnectionstatechange = () => {
-                    log(`Streamer connection state: ${peerConnection.connectionState}`);
-                };
-
-                const offer = await peerConnection.createOffer();
-                await peerConnection.setLocalDescription(offer);
-                log("Offer created and set as local description. Waiting for ICE candidates...");
+                db.ref(`rooms/${roomId}/answers`).on('child_added', async (snapshot) => {
+                    const answer = snapshot.val();
+                    const viewerId = snapshot.key;
+                    const pc = peerConnections.get(viewerId) || await createPeerConnection(viewerId, true);
+                    await pc.setRemoteDescription(new RTCSessionDescription(answer));
+                    peerConnections.set(viewerId, pc);
+                    log(`Connected to viewer ${viewerId}`);
+                });
             } catch (error) {
-                log(`Error starting stream: ${error}`);
-                console.error('Error starting stream:', error);
+                log(`Error: ${error}`);
             }
         }
 
-        async function handleAnswer() {
-            try {
-                const answerText = document.getElementById('viewer-answer').value.trim();
-                if (!answerText) {
-                    log("Error: Viewer answer is empty.");
-                    return;
-                }
-                const answer = JSON.parse(answerText);
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-                log("Viewer answer set as remote description.");
-            } catch (error) {
-                log(`Error handling answer: ${error}`);
-                console.error('Error handling answer:', error);
+        async function joinAsViewer() {
+            roomId = document.getElementById('room-id-input').value.trim();
+            if (!roomId) {
+                log("Please enter a Room ID.");
+                return;
             }
+
+            const offerSnapshot = await db.ref(`rooms/${roomId}/offer`).once('value');
+            const offer = offerSnapshot.val();
+            if (!offer) {
+                log("No stream found for this Room ID. Check with the streamer.");
+                return;
+            }
+
+            const viewerId = Math.random().toString(36).substring(2, 15);
+            const pc = await createPeerConnection(roomId, false);
+            await pc.setRemoteDescription(new RTCSessionDescription(offer));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            db.ref(`rooms/${roomId}/answers/${viewerId}`).set({
+                sdp: answer.sdp,
+                type: answer.type
+            });
+            peerConnections.set(roomId, pc);
+            log("Connected to streamer.");
         }
 
-        // Viewer functions
-        async function connectToStreamer() {
-            try {
-                const offerText = document.getElementById('streamer-offer-input').value.trim();
-                if (!offerText) {
-                    log("Error: Streamer offer is empty.");
-                    return;
-                }
+        async function createPeerConnection(targetId, isStreamer) {
+            const pc = new RTCPeerConnection(configuration);
 
-                let offer;
-                try {
-                    offer = JSON.parse(offerText);
-                } catch (e) {
-                    log("Error: Invalid streamer offer format. Please ensure it's valid JSON.");
-                    return;
-                }
-
-                peerConnection = new RTCPeerConnection(configuration);
-                log("Peer connection created for viewer.");
-
-                peerConnection.ontrack = (event) => {
-                    log("Received remote track.");
-                    const viewerVideo = document.getElementById('viewer-video');
-                    viewerVideo.srcObject = event.streams[0];
+            if (isStreamer && localStream) {
+                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            } else {
+                pc.ontrack = (event) => {
+                    log("Stream received!");
+                    document.getElementById('viewer-video').srcObject = event.streams[0];
                 };
-
-                peerConnection.onicecandidate = (event) => {
-                    if (!event.candidate) {
-                        log("ICE gathering complete.");
-                        document.getElementById('viewer-answer-output').value = JSON.stringify(peerConnection.localDescription);
-                    }
-                };
-
-                peerConnection.onconnectionstatechange = () => {
-                    log(`Viewer connection state: ${peerConnection.connectionState}`);
-                };
-
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-                log("Streamer offer set as remote description.");
-                const answer = await peerConnection.createAnswer();
-                await peerConnection.setLocalDescription(answer);
-                log("Answer created and set as local description.");
-            } catch (error) {
-                log(`Error connecting to streamer: ${error}`);
-                console.error('Error connecting to streamer:', error);
             }
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    db.ref(`rooms/${roomId}/candidates/${isStreamer ? 'streamer' : 'viewer'}/${Date.now()}`).set(event.candidate);
+                }
+            };
+
+            db.ref(`rooms/${roomId}/candidates/${isStreamer ? 'viewer' : 'streamer'}`).on('child_added', async (snapshot) => {
+                const candidate = snapshot.val();
+                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            });
+
+            pc.onconnectionstatechange = () => {
+                log(`Connection state: ${pc.connectionState}`);
+            };
+
+            return pc;
+        }
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const roomParam = urlParams.get('room');
+        if (roomParam) {
+            document.getElementById('room-id-input').value = roomParam;
+            selectRole('viewer');
         }
     </script>
 </body>
